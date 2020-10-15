@@ -67,22 +67,22 @@ class DescriptorArray
 
   // Accessors for fetching instance descriptor at descriptor number.
   inline Name GetKey(InternalIndex descriptor_number) const;
-  inline Name GetKey(const Isolate* isolate,
+  inline Name GetKey(IsolateRoot isolate,
                      InternalIndex descriptor_number) const;
   inline Object GetStrongValue(InternalIndex descriptor_number);
-  inline Object GetStrongValue(const Isolate* isolate,
+  inline Object GetStrongValue(IsolateRoot isolate,
                                InternalIndex descriptor_number);
   inline MaybeObject GetValue(InternalIndex descriptor_number);
-  inline MaybeObject GetValue(const Isolate* isolate,
+  inline MaybeObject GetValue(IsolateRoot isolate,
                               InternalIndex descriptor_number);
   inline PropertyDetails GetDetails(InternalIndex descriptor_number);
   inline int GetFieldIndex(InternalIndex descriptor_number);
   inline FieldType GetFieldType(InternalIndex descriptor_number);
-  inline FieldType GetFieldType(const Isolate* isolate,
+  inline FieldType GetFieldType(IsolateRoot isolate,
                                 InternalIndex descriptor_number);
 
   inline Name GetSortedKey(int descriptor_number);
-  inline Name GetSortedKey(const Isolate* isolate, int descriptor_number);
+  inline Name GetSortedKey(IsolateRoot isolate, int descriptor_number);
   inline int GetSortedKeyIndex(int descriptor_number);
 
   // Accessor for complete descriptor.
@@ -115,9 +115,13 @@ class DescriptorArray
   // Sort the instance descriptors by the hash codes of their keys.
   void Sort();
 
-  // Search the instance descriptors for given name.
-  V8_INLINE InternalIndex Search(Name name, int number_of_own_descriptors);
-  V8_INLINE InternalIndex Search(Name name, Map map);
+  // Search the instance descriptors for given name. {concurrent_search} signals
+  // if we are doing the search on a background thread. If so, we will sacrifice
+  // speed for thread-safety.
+  V8_INLINE InternalIndex Search(Name name, int number_of_own_descriptors,
+                                 bool concurrent_search = false);
+  V8_INLINE InternalIndex Search(Name name, Map map,
+                                 bool concurrent_search = false);
 
   // As the above, but uses DescriptorLookupCache and updates it when
   // necessary.
@@ -189,7 +193,7 @@ class DescriptorArray
 
 #ifdef DEBUG
   // Is the descriptor array sorted and without duplicates?
-  V8_EXPORT_PRIVATE bool IsSortedNoDuplicates(int valid_descriptors = -1);
+  V8_EXPORT_PRIVATE bool IsSortedNoDuplicates();
 
   // Are two DescriptorArrays equal?
   bool IsEqualTo(DescriptorArray other);

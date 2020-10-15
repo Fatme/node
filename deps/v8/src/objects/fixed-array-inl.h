@@ -20,8 +20,7 @@
 #include "src/objects/slots.h"
 #include "src/roots/roots-inl.h"
 #include "src/sanitizer/tsan.h"
-
-#include "torque-generated/class-definitions-tq-inl.h"
+#include "torque-generated/class-definitions-inl.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -70,11 +69,11 @@ bool FixedArray::ContainsOnlySmisOrHoles() {
 }
 
 Object FixedArray::get(int index) const {
-  const Isolate* isolate = GetIsolateForPtrCompr(*this);
+  IsolateRoot isolate = GetIsolateForPtrCompr(*this);
   return get(isolate, index);
 }
 
-Object FixedArray::get(const Isolate* isolate, int index) const {
+Object FixedArray::get(IsolateRoot isolate, int index) const {
   DCHECK_LT(static_cast<unsigned>(index), static_cast<unsigned>(length()));
   return TaggedField<Object>::Relaxed_Load(isolate, *this,
                                            OffsetOfElementAt(index));
@@ -121,6 +120,23 @@ void FixedArray::NoWriteBarrierSet(FixedArray array, int index, Object value) {
   DCHECK(!ObjectInYoungGeneration(value));
   int offset = OffsetOfElementAt(index);
   RELAXED_WRITE_FIELD(array, offset, value);
+}
+
+Object FixedArray::synchronized_get(int index) const {
+  IsolateRoot isolate = GetIsolateForPtrCompr(*this);
+  return synchronized_get(isolate, index);
+}
+
+Object FixedArray::synchronized_get(IsolateRoot isolate, int index) const {
+  DCHECK_LT(static_cast<unsigned>(index), static_cast<unsigned>(length()));
+  return ACQUIRE_READ_FIELD(*this, OffsetOfElementAt(index));
+}
+
+void FixedArray::synchronized_set(int index, Smi value) {
+  DCHECK_NE(map(), GetReadOnlyRoots().fixed_cow_array_map());
+  DCHECK_LT(static_cast<unsigned>(index), static_cast<unsigned>(length()));
+  DCHECK(Object(value).IsSmi());
+  RELEASE_WRITE_FIELD(*this, OffsetOfElementAt(index), value);
 }
 
 void FixedArray::set_undefined(int index) {
@@ -209,8 +225,13 @@ inline int WeakArrayList::AllocatedSize() {
 template <SearchMode search_mode, typename T>
 int BinarySearch(T* array, Name name, int valid_entries,
                  int* out_insertion_index) {
-  DCHECK(search_mode == ALL_ENTRIES || out_insertion_index == nullptr);
+  DCHECK_IMPLIES(search_mode == VALID_ENTRIES, out_insertion_index == nullptr);
   int low = 0;
+  // We have to search on all entries, even when search_mode == VALID_ENTRIES.
+  // This is because the InternalIndex might be different from the SortedIndex
+  // (i.e the first added item in {array} could be the last in the sorted
+  // index). After doing the binary search and getting the correct internal
+  // index we check to have the index lower than valid_entries, if needed.
   int high = array->number_of_entries() - 1;
   uint32_t hash = name.hash_field();
   int limit = high;
@@ -234,6 +255,11 @@ int BinarySearch(T* array, Name name, int valid_entries,
     Name entry = array->GetKey(InternalIndex(sort_index));
     uint32_t current_hash = entry.hash_field();
     if (current_hash != hash) {
+      // 'search_mode == ALL_ENTRIES' here and below is not needed since
+      // 'out_insertion_index != nullptr' implies 'search_mode == ALL_ENTRIES'.
+      // Having said that, when creating the template for <VALID_ENTRIES> these
+      // ifs can be elided by the C++ compiler if we add 'search_mode ==
+      // ALL_ENTRIES'.
       if (search_mode == ALL_ENTRIES && out_insertion_index != nullptr) {
         *out_insertion_index = sort_index + (current_hash > hash ? 0 : 1);
       }
@@ -284,8 +310,9 @@ int LinearSearch(T* array, Name name, int valid_entries,
 }
 
 template <SearchMode search_mode, typename T>
-int Search(T* array, Name name, int valid_entries, int* out_insertion_index) {
-  SLOW_DCHECK(array->IsSortedNoDuplicates());
+int Search(T* array, Name name, int valid_entries, int* out_insertion_index,
+           bool concurrent_search) {
+  SLOW_DCHECK_IMPLIES(!concurrent_search, array->IsSortedNoDuplicates());
 
   if (valid_entries == 0) {
     if (search_mode == ALL_ENTRIES && out_insertion_index != nullptr) {
@@ -294,14 +321,14 @@ int Search(T* array, Name name, int valid_entries, int* out_insertion_index) {
     return T::kNotFound;
   }
 
-  // Fast case: do linear search for small arrays.
+  // Do linear search for small arrays, and for searches in the background
+  // thread.
   const int kMaxElementsForLinearSearch = 8;
-  if (valid_entries <= kMaxElementsForLinearSearch) {
+  if (valid_entries <= kMaxElementsForLinearSearch || concurrent_search) {
     return LinearSearch<search_mode>(array, name, valid_entries,
                                      out_insertion_index);
   }
 
-  // Slow case: perform binary search.
   return BinarySearch<search_mode>(array, name, valid_entries,
                                    out_insertion_index);
 }
@@ -379,11 +406,11 @@ void FixedDoubleArray::FillWithHoles(int from, int to) {
 }
 
 MaybeObject WeakFixedArray::Get(int index) const {
-  const Isolate* isolate = GetIsolateForPtrCompr(*this);
+  IsolateRoot isolate = GetIsolateForPtrCompr(*this);
   return Get(isolate, index);
 }
 
-MaybeObject WeakFixedArray::Get(const Isolate* isolate, int index) const {
+MaybeObject WeakFixedArray::Get(IsolateRoot isolate, int index) const {
   DCHECK_LT(static_cast<unsigned>(index), static_cast<unsigned>(length()));
   return objects(isolate, index);
 }
@@ -414,11 +441,11 @@ void WeakFixedArray::CopyElements(Isolate* isolate, int dst_index,
 }
 
 MaybeObject WeakArrayList::Get(int index) const {
-  const Isolate* isolate = GetIsolateForPtrCompr(*this);
+  IsolateRoot isolate = GetIsolateForPtrCompr(*this);
   return Get(isolate, index);
 }
 
-MaybeObject WeakArrayList::Get(const Isolate* isolate, int index) const {
+MaybeObject WeakArrayList::Get(IsolateRoot isolate, int index) const {
   DCHECK_LT(static_cast<unsigned>(index), static_cast<unsigned>(capacity()));
   return objects(isolate, index);
 }
@@ -469,7 +496,7 @@ Object ArrayList::Get(int index) const {
   return FixedArray::cast(*this).get(kFirstIndex + index);
 }
 
-Object ArrayList::Get(const Isolate* isolate, int index) const {
+Object ArrayList::Get(IsolateRoot isolate, int index) const {
   return FixedArray::cast(*this).get(isolate, kFirstIndex + index);
 }
 
@@ -594,7 +621,7 @@ Object TemplateList::get(int index) const {
   return FixedArray::cast(*this).get(kFirstElementIndex + index);
 }
 
-Object TemplateList::get(const Isolate* isolate, int index) const {
+Object TemplateList::get(IsolateRoot isolate, int index) const {
   return FixedArray::cast(*this).get(isolate, kFirstElementIndex + index);
 }
 

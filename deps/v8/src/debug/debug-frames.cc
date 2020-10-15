@@ -6,13 +6,12 @@
 
 #include "src/builtins/accessors.h"
 #include "src/execution/frames-inl.h"
-#include "src/wasm/wasm-interpreter.h"
 #include "src/wasm/wasm-objects-inl.h"
 
 namespace v8 {
 namespace internal {
 
-FrameInspector::FrameInspector(StandardFrame* frame, int inlined_frame_index,
+FrameInspector::FrameInspector(CommonFrame* frame, int inlined_frame_index,
                                Isolate* isolate)
     : frame_(frame),
       inlined_frame_index_(inlined_frame_index),

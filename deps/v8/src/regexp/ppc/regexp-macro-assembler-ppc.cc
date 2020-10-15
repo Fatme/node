@@ -136,6 +136,7 @@ RegExpMacroAssemblerPPC::~RegExpMacroAssemblerPPC() {
   check_preempt_label_.Unuse();
   stack_overflow_label_.Unuse();
   internal_failure_label_.Unuse();
+  fallback_label_.Unuse();
 }
 
 
@@ -179,8 +180,13 @@ void RegExpMacroAssemblerPPC::Backtrack() {
     __ cmpi(r3, Operand(backtrack_limit()));
     __ bne(&next);
 
-    // Exceeded limits are treated as a failed match.
-    Fail();
+    // Backtrack limit exceeded.
+    if (can_fallback()) {
+      __ b(&fallback_label_);
+    } else {
+      // Can't fallback, so we treat it as a failed match.
+      Fail();
+    }
 
     __ bind(&next);
   }
@@ -242,7 +248,7 @@ void RegExpMacroAssemblerPPC::CheckGreedyLoop(Label* on_equal) {
 }
 
 void RegExpMacroAssemblerPPC::CheckNotBackReferenceIgnoreCase(
-    int start_reg, bool read_backward, Label* on_no_match) {
+    int start_reg, bool read_backward, bool unicode, Label* on_no_match) {
   Label fallthrough;
   __ LoadP(r3, register_location(start_reg), r0);  // Index of start of capture
   __ LoadP(r4, register_location(start_reg + 1), r0);  // Index of end
@@ -356,7 +362,10 @@ void RegExpMacroAssemblerPPC::CheckNotBackReferenceIgnoreCase(
     {
       AllowExternalCallThatCantCauseGC scope(masm_);
       ExternalReference function =
-          ExternalReference::re_case_insensitive_compare_uc16(isolate());
+          unicode ? ExternalReference::re_case_insensitive_compare_unicode(
+                        isolate())
+                  : ExternalReference::re_case_insensitive_compare_non_unicode(
+                        isolate());
       __ CallCFunction(function, argument_count);
     }
 
@@ -949,13 +958,20 @@ Handle<HeapObject> RegExpMacroAssemblerPPC::GetCode(Handle<String> source) {
       __ li(r3, Operand(EXCEPTION));
       __ b(&return_r3);
     }
+
+    if (fallback_label_.is_linked()) {
+      __ bind(&fallback_label_);
+      __ li(r3, Operand(FALLBACK_TO_EXPERIMENTAL));
+      __ b(&return_r3);
+    }
   }
 
   CodeDesc code_desc;
   masm_->GetCode(isolate(), &code_desc);
-  Handle<Code> code = Factory::CodeBuilder(isolate(), code_desc, Code::REGEXP)
-                          .set_self_reference(masm_->CodeObject())
-                          .Build();
+  Handle<Code> code =
+      Factory::CodeBuilder(isolate(), code_desc, CodeKind::REGEXP)
+          .set_self_reference(masm_->CodeObject())
+          .Build();
   PROFILE(masm_->isolate(),
           RegExpCodeCreateEvent(Handle<AbstractCode>::cast(code), source));
   return Handle<HeapObject>::cast(code);
